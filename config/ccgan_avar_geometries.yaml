@@ -1,0 +1,107 @@
+dataset:
+  im_path: './dataset/Geometries_1_2D/images/train/'
+  im_size: 128
+  im_channels: 1
+  batch_size: 64
+  num_workers: 4
+  condition_config:
+    condition_types: ['tensor']
+    tensor_condition_config:
+      num_objects: 1
+      num_cond_variables: 8
+      cond_factor_cont: 1.0
+      cond_factor_cat: 1.0
+      num_class_variables: 4
+      num_cont_features: 4
+      cond_drop_prob: 0.1
+  geometry_label_schema:
+    one_hot_dim: 4
+    continuous_bounds:
+      x_pos: [0.2, 0.8]
+      y_pos: [0.2, 0.8]
+      size: [0.1, 0.2]
+      rotation: [0.0, 1.0]
+
+label_embedding:
+  path_y2h: './artifacts/ccgan_avar/label_y2h'
+  path_y2cov: './artifacts/ccgan_avar/label_y2cov'
+  y2h_type: 'sinusoidal'
+  y2cov_type: 'sinusoidal'
+  batch_size: 128
+  device: 'cuda'
+
+model:
+  net_name: 'sngan'
+  dim_z: 128
+  dim_y: 128
+  img_size: 128
+  num_channels: 1
+  gene_ch: 32
+  disc_ch: 32
+  ch_multi_g: [16, 8, 8, 4, 4, 2, 1]
+  ch_multi_d: [1, 2, 4, 8, 16, 16]
+  use_aux_reg_branch: false
+  use_aux_reg_model: false
+  aux_reg_model_checkpoint: null
+  use_dre_reg: false
+
+vicinal:
+  kernel_sigma: 0.05
+  kappa: 0.1
+  threshold_type: 'hard'
+  nonzero_soft_weight_threshold: 0.0
+  use_ada_vic: false
+  ada_vic_type: 'standard'
+  ada_eps: 1.0e-05
+  min_n_per_vic: 1
+  use_symm_vic: false
+
+aux_loss:
+  aux_reg_loss_type: 'mse'
+  weight_d_aux_reg_loss: 0.0
+  weight_g_aux_reg_loss: 0.0
+  aux_reg_checkpoint: null
+  dre_lambda: 0.0
+  weight_d_aux_dre_loss: 0.0
+  weight_g_aux_dre_loss: 0.0
+  dre_checkpoint: null
+
+optimisation:
+  generator_lr: 0.0002
+  discriminator_lr: 0.0002
+  latent_dim: 128
+  batch_size_disc: 64
+  batch_size_gene: 64
+  num_d_steps: 1
+  num_grad_acc_d: 1
+  num_grad_acc_g: 1
+  max_grad_norm: 1.0
+  betas: [0.5, 0.999]
+
+logging:
+  wandb_project: 'CcGANAVAR'
+  log_model: true
+  checkpoint_dir: './checkpoints/ccgan-avar'
+  checkpoint_filename: 'ccgan-avar-{step}'
+  save_top_k: 1
+  enable_lr_monitor: true
+
+training:
+  max_steps: 100000
+  log_every_n_steps: 10
+  sample_every_n_steps: 1000
+  sample_batch_size: 64
+  save_images_dir: './samples/ccgan-avar'
+  checkpoint_sampling_freq: 5000
+  use_amp: false
+  mixed_precision_type: 'fp16'
+  loss_type: 'hinge'
+  diffaug:
+    enabled: true
+    policy: 'color,translation,cutout'
+  ema:
+    enabled: true
+    update_after_step: 1000
+    update_every: 10
+    decay: 0.999
+

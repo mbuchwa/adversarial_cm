@@ -1,0 +1,108 @@
+# Configuration driving ``ccdm_training.py`` for the Geometries dataset.
+# The structure mirrors the Lightning module arguments so that each section
+# can be overridden independently when launching experiments.
+
+dataset_params:
+  im_path: './dataset/Geometries_1_2D/images/train/'
+  im_channels: 1
+  im_size: 128
+  batch_size: 16
+  num_workers: 8
+  max_samples: null
+  train_val_test_split: [0.7, 0.15, 0.15]
+  condition_config:
+    condition_types: ['tensor']
+    tensor_condition_config:
+      num_objects: 1
+      num_cond_variables: 8
+      cond_factor_cont: 1.0
+      cond_factor_cat: 1.0
+      num_class_variables: 4
+      num_cont_features: 4
+      cond_drop_prob: 0.1
+  geometry_label_schema:
+    one_hot_dim: 4
+    continuous_bounds:
+      x_pos: [0.2, 0.8]
+      y_pos: [0.2, 0.8]
+      size: [0.1, 0.2]
+      rotation: [0.0, 1.0]
+
+ccdm_params:
+  data_name: 'Geometries-1D'
+  train_batch_size: 64
+  gradient_accumulate_every: 1
+  train_lr: 0.0001
+  train_num_steps: 200000
+  ema_update_after_step: 1000
+  ema_update_every: 10
+  ema_decay: 0.995
+  adam_betas: [0.9, 0.99]
+  results_folder: './checkpoints/ccdm'
+  sample_every: 1000
+  save_every: 5000
+  amp: true
+  mixed_precision_type: 'bf16'
+  split_batches: true
+  max_grad_norm: 1.0
+  cond_scale_visual: 1.5
+  nrow_visual: 6
+
+unet_params:
+  image_size: 128
+  in_channels: 1
+  model_channels: 128
+  channel_mults: [1, 2, 2, 2]
+  num_res_blocks: 2
+  num_heads: 4
+  attn_dim_head: 32
+  cond_drop_prob: 0.1
+
+# Diffusion hyperparameters controlling the noise schedule and sampling loop.
+diffusion_params:
+  train_timesteps: 1000
+  sample_timesteps: 50
+  beta_schedule: 'cosine'
+  pred_objective: 'pred_x0'
+  ddim_eta: 0.0
+  use_Hy: true
+
+label_embedding_params:
+  dim_embed: 128
+  y2h_embed_type: 'resnet'
+  y2cov_embed_type: 'resnet'
+
+vicinal_params:
+  kernel_sigma: 0.05
+  kappa: 0.05
+  threshold_type: 'hard'
+  nonzero_soft_weight_threshold: 0.0
+  wrap_around_labels: true
+
+logging_params:
+  wandb_project: 'CCDMGeometry'
+  log_model: true
+  log_every_n_steps: 10
+  checkpoint_dir: './checkpoints/ccdm'
+  checkpoint_filename: 'ccdm-{step}'
+  checkpoint_monitor: null
+  checkpoint_mode: 'min'
+  save_top_k: 0
+  enable_lr_monitor: true
+
+trainer_params:
+  accelerator: null
+  devices: 1
+  precision: 'bf16-mixed'
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  max_steps: 200000
+  max_epochs: null
+  check_val_every_n_epoch: 1
+
+sampling_params:
+  sample_batch_size: 16
+  num_inference_steps: 50
+  guidance_scale: 1.5
+  log_every_n_training_steps: 1000
+  log_every_n_epochs: 10

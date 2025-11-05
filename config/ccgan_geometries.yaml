@@ -1,0 +1,57 @@
+dataset:
+  im_path: './dataset/Geometries_1_2D/images/train/'
+  im_size: 128
+  im_channels: 1
+  batch_size: 64
+  num_workers: 4
+  condition_config:
+    condition_types: ['tensor']
+    tensor_condition_config:
+      num_objects: 1
+      num_cond_variables: 8
+      cond_factor_cont: 1.0
+      cond_factor_cat: 1.0
+      num_class_variables: 4
+      num_cont_features: 4
+      cond_drop_prob: 0.1
+  geometry_label_schema:
+    one_hot_dim: 4
+    continuous_bounds:
+      x_pos: [0.2, 0.8]
+      y_pos: [0.2, 0.8]
+      size: [0.1, 0.2]
+      rotation: [0.0, 1.0]
+
+model:
+  latent_dim: 128
+  hidden_dim: 1024
+  generator_layers: 8
+  discriminator_layers: 6
+  radius: 1.0
+
+vicinal:
+  kernel_sigma: 0.05
+  kappa: 0.1
+  threshold_type: hard
+  nonzero_soft_weight_threshold: 0.0
+  circular_labels: false
+
+optimisation:
+  generator_lr: 0.0002
+  discriminator_lr: 0.0002
+  batch_size_disc: 128
+  batch_size_gene: 128
+
+logging:
+  wandb_project: CcGANGeometry
+  log_model: true
+  checkpoint_dir: ./checkpoints/ccgan
+  checkpoint_filename: ccgan-{step}
+  save_top_k: 1
+  enable_lr_monitor: true
+
+training:
+  max_steps: 100000
+  log_every_n_steps: 10
+  sample_every_n_steps: 1000
+  sample_batch_size: 64

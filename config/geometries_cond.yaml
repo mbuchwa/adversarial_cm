@@ -1,0 +1,162 @@
+dataset_params:
+  im_path: './dataset/Geometries_1_2D_binary/images/'
+  im_channels : 1
+  im_size : 128
+  name: 'geometries'
+  geometry_label_schema:
+    one_hot_dim: 4
+    continuous_bounds:
+      x_pos: [0.2, 0.8]
+      y_pos: [0.2, 0.8]
+      size: [0.1, 0.2]
+      rotation: [0.0, 1.0]
+
+diffusion_params:
+  num_timesteps : 2000
+  beta_start : 0.0003
+  beta_end : 0.02
+  sigma_min: 0.002
+  sigma_max: 160 # 50
+  sigma_data: 0.5
+  rho: 7.0
+  weight_schedule: "karras"
+  loss_norm: "l2"
+
+ldm_params:
+  dim_type: '2d'
+  down_channels: [128, 128, 128, 128]
+  mid_channels: [128, 128]
+  down_sample: [ False, False, False ]
+  attn_down : [True, True, True, True]
+  time_emb_dim: 256
+  norm_channels : 32
+  image_size: 32
+  num_heads : 16
+  conv_out_channels : 128
+  cond_factor: 1.0
+  num_dimensions: 128
+  num_down_layers: 3
+  num_mid_layers: 2
+  num_up_layers: 3
+  dropout_rate: 0.0
+  condition_config:
+    condition_types: ['tensor']
+    tensor_condition_config:
+      num_objects: 1
+      num_cond_variables: 8
+      cond_factor_cont: 1.0
+      cond_factor_cat: 1.0
+      num_class_variables: 4
+      num_cont_features: 4
+      cond_drop_prob: 0.1
+
+discriminator_params:
+  image_channels : 1
+  embedding_dim : 128
+  num_blocks : 5
+  initial_features : 64
+  discriminator_loss_upper_bound : 0.25
+  smoothing_max_kernel: 7
+  smoothing_min_kernel: 1
+  smoothing_decay: 0.98
+  weight_decay: 0.0001
+
+autoencoder_params:
+  z_channels: 1
+  codebook_size : 20
+  down_channels : [32, 64, 128, 256]
+  mid_channels : [256, 256]
+  down_sample : [True, True, False]
+  attn_down : [False, False, False]
+  norm_channels: 32
+  num_heads: 16
+  num_down_layers : 3
+  num_mid_layers : 2
+  num_up_layers : 3
+  use_condition: False
+
+consistency_params:
+  num_scales: 10
+  training_mode: 'consistency_training'
+  sigma_max: 160
+  sigma_min: 0.002
+  rho: 7.0
+#  sigma_min: 0.000007
+#  sigma_max: 0.625
+#  rho: 2.0
+  noise_schedule: "cosine"
+  beta_end_smooth_factor: 0.8
+  dropout_rate: 0.1
+  norm_type: "layer_norm"
+  attention_dropout_rate: 0.1
+  spectral_norm: True
+  layer_norm: True
+  max_disc_loss_bound: 0.15
+  ae_dropout_rate: 0.1
+  ae_norm_type: "batch_norm"
+  patience: 10
+  seed: 1111
+  kl_weight: 0.00001
+  disc_lr_reduction_factor: 0.1
+  consistency_logging_interval: 10
+  ema_decay: 0.97
+  weight_decay: 0.0001
+  weight_schedule: "truncated-snr"
+  loss_norm: "l2"
+
+train_params:
+  seed : 1111
+  task_name: 'geometries'
+  log_dir: "logs"
+  experiment_name: "diffusion_gan"
+  checkpoint_dir: "checkpoints"
+  patience: 50
+  num_workers: 4
+  ldm_batch_size: 64
+  disc_batch_size: 128
+  autoencoder_batch_size: 8
+  consistency_batch_size: 256
+  discriminator_start_epoch: 0
+  codebook_weight: 1
+  commitment_beta: 0.2
+  perceptual_weight: 1
+  discriminator_weight: 0.001
+  discriminator_steps: 1
+  gradient_penalty_weight: 0.01
+  disc_loss_type: 'bce'
+  disc_input_noise_std: 0.0
+  label_smoothing: 0.1
+  max_discriminator_steps: 10
+  adv_ramp_up_epochs: 10
+  lambda_adv: 0.1
+  lambda_adv_min: 0.1
+  lambda_adv_max: 2.0
+  freeze_cm_epoch: 50 # 150
+  rollout_schedule: null
+  rollout_warmup_epochs: 30 # 30
+  rollout_plateau_patience: 10 # 5
+  rollout_plateau_delta: 0.01
+  rollout_plateau_cooldown: 1
+  kl_weight: 0.000005
+  ldm_epochs: 500
+  autoencoder_epochs : 500
+  disc_epochs: 500
+  consistency_epochs: 500
+  num_samples : 1
+  num_grid_rows : 5
+  ldm_lr: 0.0001
+  disc_lr: 0.0008
+  consistency_lr: 0.0003
+  lambda_gan: 1.0
+  autoencoder_lr: 0.0001
+  autoencoder_acc_steps : 1
+  autoencoder_img_save_steps : 8
+  save_latents : False
+  cf_guidance_scale : 1.0
+  vae_latent_dir_name : 'vae_latents'
+  vqvae_latent_dir_name : 'vqvae_latents'
+  consistency_ckpt_cond_name: './checkpoints/consistency_model/best_model_26_04_2025-13-07.ckpt'
+  gan_ckpt_cond_name: './checkpoints/gan_ldm/last.ckpt'
+  ldm_ckpt_cond_name: './checkpoints/ldm/best_model_22_04_2025-22-43.ckpt'
+  vqvae_autoencoder_ckpt_name: './checkpoints/vqvae/last.ckpt'
+  vqvae_discriminator_ckpt_name: './checkpoints/disc/last.ckpt'
