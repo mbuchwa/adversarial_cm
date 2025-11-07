@@ -128,7 +128,6 @@ class KarrasDiffusion:
 
         return terms
 
-
     def consistency_losses(
             self,
             model,
@@ -144,7 +143,6 @@ class KarrasDiffusion:
             current_epoch=0,
     ):
         """Compute consistency losses.
-
         Args:
             model: The student model being trained.
             x_start: Clean input samples.
@@ -162,20 +160,15 @@ class KarrasDiffusion:
                 examples for n epochs
             current_epoch: current epoch of training
         """
-        import torch
-        import torch.nn.functional as F
-
         if model_kwargs is None:
             model_kwargs = {}
         if isinstance(model_kwargs, torch.Tensor):
             model_kwargs = {'tensor': model_kwargs}
         if noise is None:
             noise = torch.randn_like(x_start)
-
         dims = x_start.ndim
         device = x_start.device
         B = x_start.shape[0]
-
         warmup = (
                 unnoised_training_epochs is not None
                 and unnoised_training_epochs > 0
@@ -218,7 +211,6 @@ class KarrasDiffusion:
             return obj
 
         # ------------------------------------------------------------------------
-
         def denoise_fn(x, t, model_kwargs_local):
             return self.denoise(model, x, t, **model_kwargs_local)
 
@@ -228,7 +220,6 @@ class KarrasDiffusion:
                 return self.denoise(target_model, x, t, **model_kwargs_local)
         else:
             raise NotImplementedError("Must have a target model")
-
         if teacher_model:
             # @torch.no_grad()
             def teacher_denoise_fn(x, t, model_kwargs_local):
@@ -281,35 +272,28 @@ class KarrasDiffusion:
                 indices = torch.zeros(B, device=device, dtype=torch.long)
             else:
                 indices = torch.randint(0, num_scales - 1, (B,), device=device, dtype=torch.long)
-
         # Precompute sigma schedule once and index it
         idxs_all = torch.arange(num_scales, device=device)
         sigma_sched = (
                 (self.sigma_max ** (1 / self.rho) + idxs_all / (num_scales - 1) *
                  (self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho))) ** self.rho
         )
-
         # Convert indices to times t and t+1 via the schedule
         t = sigma_sched[indices]
         next_idx = torch.clamp(indices + 1, max=num_scales - 1)
         t2 = sigma_sched[next_idx]
-
         # Noisy current state
         x_t = x_start + noise * append_dims(t, dims)
-
         # Store RNG state for reproducibility across the two forward passes below
         dropout_state = torch.get_rng_state()
         model_output, distiller = denoise_fn(x_t, t, model_kwargs)
-
         if teacher_model is None:
             x_t2 = euler_solver(x_t, t, t2, x_start, model_kwargs).detach()
         else:
             x_t2 = heun_solver(x_t, t, t2, x_start, model_kwargs).detach()
-
         torch.set_rng_state(dropout_state)
         model_output_target, distiller_target = target_denoise_fn(x_t2, t2, model_kwargs)
         distiller_target = distiller_target.detach()
-
         # Weighted reconstruction loss
         snrs = self.get_snr(t)
         weights = get_weightings(self.weight_schedule, snrs, self.sigma_data)
@@ -331,134 +315,121 @@ class KarrasDiffusion:
             loss = self.lpips_loss((distiller + 1) / 2.0, (distiller_target + 1) / 2.0) * weights
         else:
             raise ValueError(f"Unknown loss norm {self.loss_norm}")
-
         terms = {"loss": loss}
 
-        # # if loss.mean().detach().cpu().item() > 0.2:
-        # ##########################################
-        # # import matplotlib
-        # # matplotlib.use('TkAgg')
-        # import matplotlib.pyplot as plt
-        #
-        # # Extract the tensors
-        # distiller_img = distiller[0, 0].detach().cpu().numpy()
-        # target_img = distiller_target[0, 0].detach().cpu().numpy()
-        #
-        # # Plot side by side
-        # fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-        # axes[0].imshow(distiller_img, cmap='gray')
-        # axes[0].set_title('Distiller Output')
-        # axes[0].axis('off')
-        #
-        # axes[1].imshow(target_img, cmap='gray')
-        # axes[1].set_title('Distiller Target')
-        # axes[1].axis('off')
-        #
-        # plt.tight_layout()
-        # plt.savefig("distiller_vs_target.png", dpi=300, bbox_inches='tight')
-        # plt.show()
-        # ##########################################
-
-
-        # -------------------------------------------
-        # Fixed rollout for all batch elements
-        # -------------------------------------------
-        # Remaining steps available for each sample (to reach last index)
-        rem = torch.clamp((num_scales - 1) - indices, min=0)
-
+        # ============================================================================
+        # ✅ OPTION 1: SEPARATE SAMPLING FOR DISCRIMINATOR ROLLOUT
+        # ============================================================================
+        # Sample indices that guarantee full rollout distance for discriminator
         if warmup:
-            # For warm-up, force maximum rollout from current index (0) to the end.
-            # Keep original batch order (no sorting needed since all have same rollout).
-            rollout_steps = rem  # full remaining steps for each item
+            disc_start_indices = torch.zeros(B, device=device, dtype=torch.long)
+        else:
+            # ✅ Calculate the maximum valid starting index that allows full rollout
+            # For rollout=9, max_valid_start=1 (indices 0 or 1 allow reaching index 9 or 10)
+            max_valid_start = max(0, num_scales - 1 - rollout)
 
-            # Prepare tensors in original order
-            x_fake = x_t.clone()
-            t_cur_idx = indices.clone()
-            t_cur = sigma_sched[t_cur_idx]
+            if max_valid_start == 0:
+                # Only index 0 is valid
+                disc_start_indices = torch.zeros(B, device=device, dtype=torch.long)
+            else:
+                # Sample uniformly from valid range [0, max_valid_start]
+                disc_start_indices = torch.randint(0, max_valid_start + 1, (B,), device=device, dtype=torch.long)
+
+        # ============================================================================
+        # DISCRIMINATOR ROLLOUT SECTION
+        # ============================================================================
+        if warmup:
+            # For warm-up, use full remaining steps from index 0
+            rem = torch.clamp((num_scales - 1) - disc_start_indices, min=0)
+            rollout_steps = rem
+
+            x_fake = x_start + noise * append_dims(sigma_sched[disc_start_indices], dims)
+            t_cur_idx = disc_start_indices.clone()
+            t_start_idx = disc_start_indices.clone()
             x0_local = x_start
             kwargs_local = model_kwargs
 
             max_steps = int(rollout_steps.max().item()) if rollout_steps.numel() > 0 else 0
             for step in range(max_steps):
-                # number of items still active at this step
                 k = int((rollout_steps > step).sum().item())
                 if k <= 0:
                     break
                 if k < 2:
-                    break  # optional: avoid BN issues with tiny mini-batches
+                    break
 
                 cur_idx = t_cur_idx[:k]
                 next_idx = torch.minimum(cur_idx + 1, torch.full_like(cur_idx, num_scales - 1))
                 t_now = sigma_sched[cur_idx]
                 t_next = sigma_sched[next_idx]
 
-                # Slice kwargs to the same active prefix
                 kwargs_step = _slice_prefix_batch(kwargs_local, k)
-
-                # Heun step only on active prefix using the consistency model
                 x_fake[:k] = heun_solver_consistency(
                     x_fake[:k], t_now, t_next, x0_local[:k], kwargs_step
                 )
 
-                # advance indices/times for active prefix
                 t_cur_idx[:k] = next_idx
-                t_cur[:k] = t_next
+
+            t_cur = sigma_sched[t_cur_idx]
+            t_start = sigma_sched[t_start_idx]
+            x_tn_consistency = x_fake
 
         else:
-            # Use fixed rollout value for all batch elements, clamped by remaining steps
-            rollout_steps = torch.clamp(torch.full((B,), rollout, device=device, dtype=torch.long), max=rem)
+            # ✅ Use fixed rollout - no clamping needed since we sampled valid indices!
+            rollout_steps = torch.full((B,), rollout, device=device, dtype=torch.long)
 
-            # Since all elements have the same (or very similar) rollout, no need to sort
-            # But we keep the sorting logic for compatibility with variable rem values
+            # Sort by rollout steps for efficient processing (all same, but keep structure)
             roll_sorted, order = torch.sort(rollout_steps, descending=True)
             inv_order = torch.empty_like(order)
             inv_order[order] = torch.arange(order.numel(), device=device)
 
             # Reorder batch-wise things
-            x_fake = x_t.index_select(0, order).clone()
-            t_cur_idx = indices.index_select(0, order).clone()
-            t_cur = sigma_sched[t_cur_idx]
+            x_t_disc = x_start.index_select(0, order) + noise.index_select(0, order) * append_dims(
+                sigma_sched[disc_start_indices.index_select(0, order)], dims
+            )
+            x_fake = x_t_disc.clone()
+            t_cur_idx = disc_start_indices.index_select(0, order).clone()
+            t_start_idx = disc_start_indices.index_select(0, order).clone()
             x0_sorted = x_start.index_select(0, order)
             kwargs_sorted = _index_select_batch(model_kwargs, order)
 
             max_steps = int(roll_sorted[0].item()) if roll_sorted.numel() > 0 else 0
             for step in range(max_steps):
-                # number of items still active at this step
                 k = int((roll_sorted > step).sum().item())
                 if k <= 0:
                     break
                 if k < 2:
-                    break  # optional: avoid BN issues with tiny mini-batches
+                    break
 
                 cur_idx = t_cur_idx[:k]
                 next_idx = torch.minimum(cur_idx + 1, torch.full_like(cur_idx, num_scales - 1))
                 t_now = sigma_sched[cur_idx]
                 t_next = sigma_sched[next_idx]
 
-                # Slice kwargs to the same active prefix
                 kwargs_step = _slice_prefix_batch(kwargs_sorted, k)
-
-                # Heun step only on active prefix
                 x_fake[:k] = heun_solver_consistency(
                     x_fake[:k], t_now, t_next, x0_sorted[:k], kwargs_step
                 )
 
-                # advance indices/times for active prefix
                 t_cur_idx[:k] = next_idx
-                t_cur[:k] = t_next
 
-            # Map results back to original batch order
+            # Map back to original batch order
+            t_cur_idx = t_cur_idx.index_select(0, inv_order)
+            t_start_idx = t_start_idx.index_select(0, inv_order)
+
+            t_cur = sigma_sched[t_cur_idx]
+            t_start = sigma_sched[t_start_idx]
+
             x_fake = x_fake.index_select(0, inv_order)
-            t_cur = t_cur.index_select(0, inv_order)
+            x_tn_consistency = x_fake
 
-        # For warmup, we don't need to reorder since we didn't sort
-        if warmup:
-            x_tn_consistency = x_fake
-        else:
-            x_tn_consistency = x_fake
+        # ✅ Create starting noisy image for discriminator
+        x_t_rollout_start = x_start + noise * append_dims(t_start, dims)
 
         # True noisy reference at the final times
         x_tn_true = x_start + noise * append_dims(t_cur, dims)
+
+        # ✅ Calculate actual rollout distances achieved
+        actual_rollout_distances = (t_cur_idx - t_start_idx).float()
 
         terms.update({
             "x_tn_consistency": x_tn_consistency,  # predicted noisy image of CM after rollout
@@ -466,11 +437,12 @@ class KarrasDiffusion:
             "x_tn_target": distiller_target,  # predicted noisy image of Target Model after rollout
             "x_tn_target_model_output": model_output_target,  # predicted denoised image of target model
             "x_tn_true": x_tn_true,  # true noisy image at end of rollout
-            "x_t": x_t,  # noisy image at start
-            "t": t,
-            "t_cur": t_cur,
+            "x_t": x_t_rollout_start,  # ✅ noisy image at START of rollout
+            "t": t_start,  # ✅ Starting timestep of rollout
+            "t_cur": t_cur,  # Ending timestep of rollout
             "x_start": x_start,
             "model_kwargs": model_kwargs,
+            "actual_rollout": actual_rollout_distances,  # ✅ Track actual rollout per sample
             # Timestep-based weighting (inverse ramp)
             "t_weight": (((t_cur ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho))) /
                          ((self.sigma_min ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho)))),
