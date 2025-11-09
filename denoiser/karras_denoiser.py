@@ -14,7 +14,7 @@ def get_weightings(weight_schedule, snrs, sigma_data):
     elif weight_schedule == "snr+1":
         weightings = snrs + 1
     elif weight_schedule == "karras":
-        weightings = snrs + 1.0 / sigma_data**2
+        weightings = snrs + 1.0 / sigma_data ** 2
     elif weight_schedule == "truncated-snr":
         weightings = torch.clamp(snrs, min=1.0)
     elif weight_schedule == "uniform":
@@ -26,15 +26,15 @@ def get_weightings(weight_schedule, snrs, sigma_data):
 
 class KarrasDiffusion:
     def __init__(
-        self,
-        sigma_data: float = 0.5,
-        sigma_max=80.0,
-        sigma_min=0.002,
-        rho=7.0,
-        steps=40,
-        weight_schedule="karras",
-        distillation=False,
-        loss_norm="lpips",
+            self,
+            sigma_data: float = 0.5,
+            sigma_max=80.0,
+            sigma_min=0.002,
+            rho=7.0,
+            steps=40,
+            weight_schedule="karras",
+            distillation=False,
+            loss_norm="lpips",
     ):
         self.sigma_data = sigma_data
         self.sigma_max = sigma_max
@@ -69,7 +69,7 @@ class KarrasDiffusion:
         self.rollout_decay = max(int(decay), 0)
 
     def get_snr(self, sigmas):
-        return sigmas**-2
+        return sigmas ** -2
 
     def get_sigmas(self):
         """Constructs the noise schedule of Karras et al. (2022)."""
@@ -80,21 +80,21 @@ class KarrasDiffusion:
         return sigmas
 
     def get_scalings(self, sigma):
-        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
-        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
-        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
+        c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
+        c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
+        c_in = 1 / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
         return c_skip, c_out, c_in
 
     def get_scalings_for_boundary_condition(self, sigma):
-        c_skip = self.sigma_data**2 / (
-            (sigma - self.sigma_min) ** 2 + self.sigma_data**2
+        c_skip = self.sigma_data ** 2 / (
+                (sigma - self.sigma_min) ** 2 + self.sigma_data ** 2
         )
         c_out = (
-            (sigma - self.sigma_min)
-            * self.sigma_data
-            / (sigma**2 + self.sigma_data**2) ** 0.5
+                (sigma - self.sigma_min)
+                * self.sigma_data
+                / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
         )
-        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
+        c_in = 1 / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
         return c_skip, c_out, c_in
 
     def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
@@ -138,7 +138,7 @@ class KarrasDiffusion:
             teacher_model=None,
             teacher_diffusion=None,
             noise=None,
-            max_rollout=10,
+            rollout=10,
             min_rollout=5,
             unnoised_training_epochs=20,
             current_epoch=0,
@@ -154,7 +154,7 @@ class KarrasDiffusion:
             teacher_model: Optional teacher model for Heun updates.
             teacher_diffusion: Diffusion object for teacher model.
             noise: Optional pre-sampled noise.
-            max_rollout: Maximum number of rollout steps to perform during the
+            rollout: Maximum number of rollout steps to perform during the
                 multi-step rollout used.
             min_rollout: Minimum number of rollout steps to perform during the
                 multi-step rollout used.
@@ -179,9 +179,9 @@ class KarrasDiffusion:
         B = x_start.shape[0]
 
         warmup = (
-            unnoised_training_epochs is not None
-            and unnoised_training_epochs > 0
-            and current_epoch < unnoised_training_epochs
+                unnoised_training_epochs is not None
+                and unnoised_training_epochs > 0
+                and current_epoch < unnoised_training_epochs
         )
 
         # ---- helpers ------------------------------------------------------------
@@ -336,7 +336,6 @@ class KarrasDiffusion:
 
         terms = {"loss": loss}
 
-
         # -------------------------------------------
         # Efficient multi-step rollout (sorted prefix)
         # -------------------------------------------
@@ -347,7 +346,7 @@ class KarrasDiffusion:
             # For warm-up, force maximum rollout from current index (0) to the end.
             # Ignore min_rollout / max_rollout entirely.
             # Keep original batch order (no sorting).
-            roll_sorted = rem                  # full remaining steps for each item
+            roll_sorted = rem  # full remaining steps for each item
             order = torch.arange(B, device=device)
             inv_order = order
 
@@ -386,7 +385,7 @@ class KarrasDiffusion:
 
         else:
             # Normal stochastic rollout bounded by min/max
-            effective_max_rollout = max_rollout
+            effective_max_rollout = rollout
             if effective_max_rollout is not None:
                 effective_max_rollout = max(effective_max_rollout - self.rollout_decay, min_rollout)
                 effective_max_rollout = max(effective_max_rollout, min_rollout)
@@ -447,7 +446,7 @@ class KarrasDiffusion:
             "x_tn_model_output": model_output,  # predicted denoised image of CM
             "x_tn_target": distiller_target,  # predicted noisy image of Target Model after rollout
             "x_tn_target_model_output": model_output_target,  # predicted denoised image of target model
-            "x_tn_true": x_tn_true,   # true noisy image at end of rollout
+            "x_tn_true": x_tn_true,  # true noisy image at end of rollout
             "x_t": x_t,  # noisy image at start
             "t": t,
             "t_cur": t_cur,
@@ -458,17 +457,118 @@ class KarrasDiffusion:
                          ((self.sigma_min ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho)))),
         })
 
+        # ============================================================================
+        # DEBUG VISUALIZATION - Add this at the very end before "return terms"
+        # ============================================================================
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Only visualize occasionally to avoid slowdown
+        if current_epoch % 10 == 0 and torch.rand(1).item() < 0.1:  # 10% chance every 10 epochs
+            fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+            fig.suptitle(
+                f"Epoch {current_epoch} | Rollout {rollout}, Min Rollout {min_rollout}\n"
+                f"CM: t={t[0].item():.4f}, t2={t2[0].item():.4f} (gap={abs(t2[0] - t[0]).item():.4f}) | "
+                f"Disc Rollout: t_start={t[0].item():.4f}, t_cur={t_cur[0].item():.4f} "
+                f"(gap={abs(t_cur[0] - t[0]).item():.4f})",
+                fontsize=14
+            )
+
+            # Helper to convert tensor to displayable image
+            def to_img(tensor, idx=0):
+                img = tensor[idx].detach().cpu()
+                if img.dim() == 3:  # [C, H, W]
+                    if img.shape[0] == 1:  # Grayscale
+                        return img[0].numpy()
+                    elif img.shape[0] == 3:  # RGB
+                        return img.permute(1, 2, 0).numpy()
+                return img.numpy()
+
+            # Row 1: CM-related images (adjacent timesteps)
+            axes[0, 0].imshow(to_img(x_start), cmap='gray' if x_start.shape[1] == 1 else None)
+            axes[0, 0].set_title(f"x_start (clean)\nt=0")
+            axes[0, 0].axis('off')
+
+            axes[0, 1].imshow(to_img(x_t), cmap='gray' if x_t.shape[1] == 1 else None)
+            axes[0, 1].set_title(f"x_t (CM noisy start)\nt={t[0].item():.4f}\nindex={indices[0].item()}")
+            axes[0, 1].axis('off')
+
+            axes[0, 2].imshow(to_img(terms["x_tn_model_output"]), cmap='gray' if x_start.shape[1] == 1 else None)
+            axes[0, 2].set_title(f"x_tn_model_output\n(CM prediction at t)")
+            axes[0, 2].axis('off')
+
+            axes[0, 3].imshow(to_img(terms["x_tn_target"]), cmap='gray' if x_start.shape[1] == 1 else None)
+            axes[0, 3].set_title(f"x_tn_target\n(Target at t2={t2[0].item():.4f})\nindex={next_idx[0].item()}")
+            axes[0, 3].axis('off')
+
+            # Row 2: Discriminator rollout images (stochastic multi-step)
+            axes[1, 0].imshow(to_img(terms["x_t"]), cmap='gray' if x_start.shape[1] == 1 else None)
+            axes[1, 0].set_title(f"x_t (Disc start)\nt={terms['t'][0].item():.4f}\nindex={indices[0].item()}")
+            axes[1, 0].axis('off')
+
+            axes[1, 1].imshow(to_img(terms["x_tn_consistency"]), cmap='gray' if x_start.shape[1] == 1 else None)
+            # Calculate actual rollout for this sample
+            actual_rollout_sample = int((t_cur_idx[inv_order[0]].item() - indices[0].item()))
+            axes[1, 1].set_title(
+                f"x_tn_consistency (Disc)\n(CM rollout)\nt_cur={terms['t_cur'][0].item():.4f}\nrollout={actual_rollout_sample} steps")
+            axes[1, 1].axis('off')
+
+            axes[1, 2].imshow(to_img(terms["x_tn_true"]), cmap='gray' if x_start.shape[1] == 1 else None)
+            axes[1, 2].set_title(f"x_tn_true (Disc)\n(True noisy)\nt_cur={terms['t_cur'][0].item():.4f}")
+            axes[1, 2].axis('off')
+
+            # Difference image
+            diff = (terms["x_tn_consistency"] - terms["x_tn_true"]).abs()
+            axes[1, 3].imshow(to_img(diff), cmap='hot')
+            axes[1, 3].set_title(f"Abs Difference\n(Consistency - True)")
+            axes[1, 3].axis('off')
+
+            plt.tight_layout()
+            plt.savefig(f"debug_terms_old_version_epoch_{current_epoch}.png", dpi=150, bbox_inches='tight')
+            plt.close()
+
+            # Print detailed info
+            print("\n" + "=" * 80)
+            print(f"TERMS DEBUG (STOCHASTIC ROLLOUT) - Epoch {current_epoch}")
+            print("=" * 80)
+            print(f"Rollout parameters: max={rollout}, min={min_rollout}, decay={self.rollout_decay}")
+            print(f"\nCM Training (adjacent timesteps):")
+            print(f"  t (random):        {t[0].item():.6f} (index={indices[0].item()})")
+            print(f"  t2 (t+1):          {t2[0].item():.6f} (index={next_idx[0].item()})")
+            print(f"  Timestep gap:      {(t2[0] - t[0]).item():.6f}")
+            print(f"\nDiscriminator Stochastic Rollout (sample 0):")
+            print(f"  Start index:       {indices[0].item()}")
+            print(f"  t_start:           {terms['t'][0].item():.6f}")
+            # Calculate the actual ending index after reordering
+            actual_end_idx = t_cur_idx[inv_order[0]].item()
+            actual_rollout_sample = int(actual_end_idx - indices[0].item())
+            print(f"  End index:         {actual_end_idx}")
+            print(f"  t_cur:             {terms['t_cur'][0].item():.6f}")
+            print(f"  Actual rollout:    {actual_rollout_sample} steps")
+            print(f"  Sigma gap:         {(terms['t_cur'][0] - terms['t'][0]).item():.6f}")
+            print(f"\nRollout Statistics (across batch):")
+            # Get rollout distances for all samples
+            all_rollouts = t_cur_idx[inv_order] - indices
+            print(f"  Min rollout:       {all_rollouts.min().item()} steps")
+            print(f"  Max rollout:       {all_rollouts.max().item()} steps")
+            print(f"  Mean rollout:      {all_rollouts.float().mean().item():.2f} steps")
+            print(f"\nImage shapes:")
+            print(f"  x_start:           {x_start.shape}")
+            print(f"  x_tn_consistency:  {terms['x_tn_consistency'].shape}")
+            print(f"  x_tn_true:         {terms['x_tn_true'].shape}")
+            print("=" * 80 + "\n")
+
         return terms
 
     def progdist_losses(
-        self,
-        model,
-        x_start,
-        num_scales,
-        model_kwargs=None,
-        teacher_model=None,
-        teacher_diffusion=None,
-        noise=None,
+            self,
+            model,
+            x_start,
+            num_scales,
+            model_kwargs=None,
+            teacher_model=None,
+            teacher_diffusion=None,
+            noise=None,
     ):
         if model_kwargs is None:
             model_kwargs = {}
@@ -503,19 +603,19 @@ class KarrasDiffusion:
         indices = torch.randint(0, num_scales, (x_start.shape[0],), device=x_start.device)
 
         t = self.sigma_max ** (1 / self.rho) + indices / num_scales * (
-            self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
+                self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
         )
-        t = t**self.rho
+        t = t ** self.rho
 
         t2 = self.sigma_max ** (1 / self.rho) + (indices + 0.5) / num_scales * (
-            self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
+                self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
         )
-        t2 = t2**self.rho
+        t2 = t2 ** self.rho
 
         t3 = self.sigma_max ** (1 / self.rho) + (indices + 1) / num_scales * (
-            self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
+                self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho)
         )
-        t3 = t3**self.rho
+        t3 = t3 ** self.rho
 
         x_t = x_start + noise * append_dims(t, dims)
 
@@ -539,11 +639,11 @@ class KarrasDiffusion:
                 denoised_x = F.interpolate(denoised_x, size=224, mode="bilinear")
                 target_x = F.interpolate(target_x, size=224, mode="bilinear")
             loss = (
-                self.lpips_loss(
-                    (denoised_x + 1) / 2.0,
-                    (target_x + 1) / 2.0,
-                )
-                * weights
+                    self.lpips_loss(
+                        (denoised_x + 1) / 2.0,
+                        (target_x + 1) / 2.0,
+                    )
+                    * weights
             )
         else:
             raise ValueError(f"Unknown loss norm {self.loss_norm}")
@@ -571,25 +671,25 @@ class KarrasDiffusion:
 
 
 def karras_sample(
-    diffusion,
-    model,
-    shape,
-    steps,
-    clip_denoised=True,
-    progress=False,
-    callback=None,
-    model_kwargs=None,
-    device=None,
-    sigma_min=0.002,
-    sigma_max=80.0,  # higher for highres?
-    rho=7.0,
-    sampler="heun",
-    s_churn=0.0,
-    s_tmin=0.0,
-    s_tmax=float("inf"),
-    s_noise=1.0,
-    generator=None,
-    ts=None,
+        diffusion,
+        model,
+        shape,
+        steps,
+        clip_denoised=True,
+        progress=False,
+        callback=None,
+        model_kwargs=None,
+        device=None,
+        sigma_min=0.002,
+        sigma_max=80.0,  # higher for highres?
+        rho=7.0,
+        sampler="heun",
+        s_churn=0.0,
+        s_tmin=0.0,
+        s_tmax=float("inf"),
+        s_noise=1.0,
+        generator=None,
+        ts=None,
 ):
     if generator is None:
         generator = get_generator("dummy")
@@ -661,9 +761,9 @@ def get_ancestral_step(sigma_from, sigma_to):
     """Calculates torche noise level (sigma_down) to step down to and torche amount
     of noise to add (sigma_up) when doing an ancestral sampling step."""
     sigma_up = (
-        sigma_to**2 * (sigma_from**2 - sigma_to**2) / sigma_from**2
-    ) ** 0.5
-    sigma_down = (sigma_to**2 - sigma_up**2) ** 0.5
+                       sigma_to ** 2 * (sigma_from ** 2 - sigma_to ** 2) / sigma_from ** 2
+               ) ** 0.5
+    sigma_down = (sigma_to ** 2 - sigma_up ** 2) ** 0.5
     return sigma_down, sigma_up
 
 
@@ -719,17 +819,17 @@ def sample_midpoint_ancestral(model, x, ts, generator, progress=False, callback=
 
 @torch.no_grad()
 def sample_heun(
-    denoiser,
-    x,
-    sigmas,
-    generator,
-    progress=False,
-    callback=None,
-    s_churn=0.0,
-    s_tmin=0.0,
-    s_tmax=float("inf"),
-    s_noise=1.0,
-    model_kwargs=None
+        denoiser,
+        x,
+        sigmas,
+        generator,
+        progress=False,
+        callback=None,
+        s_churn=0.0,
+        s_tmin=0.0,
+        s_tmax=float("inf"),
+        s_noise=1.0,
+        model_kwargs=None
 ):
     """Implements Algoritorchm 2 (Heun steps) from Karras et al. (2022)."""
     s_in = x.new_ones([x.shape[0]])
@@ -741,14 +841,14 @@ def sample_heun(
 
     for i in indices:
         gamma = (
-            min(s_churn / (len(sigmas) - 1), 2**0.5 - 1)
+            min(s_churn / (len(sigmas) - 1), 2 ** 0.5 - 1)
             if s_tmin <= sigmas[i] <= s_tmax
             else 0.0
         )
         eps = generator.randn_like(x) * s_noise
         sigma_hat = sigmas[i] * (gamma + 1)
         if gamma > 0:
-            x = x + eps * (sigma_hat**2 - sigmas[i] ** 2) ** 0.5
+            x = x + eps * (sigma_hat ** 2 - sigmas[i] ** 2) ** 0.5
 
         denoised = denoiser(x, sigma_hat * s_in)
         d = to_d(x, sigma_hat, denoised)
@@ -806,12 +906,12 @@ def sample_heun(
 
 @torch.no_grad()
 def sample_euler(
-    denoiser,
-    x,
-    sigmas,
-    generator,
-    progress=False,
-    callback=None,
+        denoiser,
+        x,
+        sigmas,
+        generator,
+        progress=False,
+        callback=None,
 ):
     """Implements Algoritorchm 2 (Heun steps) from Karras et al. (2022)."""
     s_in = x.new_ones([x.shape[0]])
@@ -841,16 +941,16 @@ def sample_euler(
 
 @torch.no_grad()
 def sample_dpm(
-    denoiser,
-    x,
-    sigmas,
-    generator,
-    progress=False,
-    callback=None,
-    s_churn=0.0,
-    s_tmin=0.0,
-    s_tmax=float("inf"),
-    s_noise=1.0,
+        denoiser,
+        x,
+        sigmas,
+        generator,
+        progress=False,
+        callback=None,
+        s_churn=0.0,
+        s_tmin=0.0,
+        s_tmax=float("inf"),
+        s_noise=1.0,
 ):
     """A sampler inspired by DPM-Solver-2 and Algoritorchm 2 from Karras et al. (2022)."""
     s_in = x.new_ones([x.shape[0]])
@@ -862,14 +962,14 @@ def sample_dpm(
 
     for i in indices:
         gamma = (
-            min(s_churn / (len(sigmas) - 1), 2**0.5 - 1)
+            min(s_churn / (len(sigmas) - 1), 2 ** 0.5 - 1)
             if s_tmin <= sigmas[i] <= s_tmax
             else 0.0
         )
         eps = generator.randn_like(x) * s_noise
         sigma_hat = sigmas[i] * (gamma + 1)
         if gamma > 0:
-            x = x + eps * (sigma_hat**2 - sigmas[i] ** 2) ** 0.5
+            x = x + eps * (sigma_hat ** 2 - sigmas[i] ** 2) ** 0.5
         denoised = denoiser(x, sigma_hat * s_in)
         d = to_d(x, sigma_hat, denoised)
         if callback is not None:
@@ -895,12 +995,12 @@ def sample_dpm(
 
 @torch.no_grad()
 def sample_onestep(
-    distiller,
-    x,
-    sigmas,
-    generator=None,
-    progress=False,
-    callback=None,
+        distiller,
+        x,
+        sigmas,
+        generator=None,
+        progress=False,
+        callback=None,
 ):
     """Single-step generation from a distilled model."""
     s_in = x.new_ones([x.shape[0]])
@@ -909,17 +1009,17 @@ def sample_onestep(
 
 @torch.no_grad()
 def stochastic_iterative_sampler(
-    distiller,
-    x,
-    sigmas,
-    generator,
-    ts,
-    progress=False,
-    callback=None,
-    t_min=0.002,
-    t_max=80.0,
-    rho=7.0,
-    steps=40,
+        distiller,
+        x,
+        sigmas,
+        generator,
+        ts,
+        progress=False,
+        callback=None,
+        t_min=0.002,
+        t_max=80.0,
+        rho=7.0,
+        steps=40,
 ):
     t_max_rho = t_max ** (1 / rho)
     t_min_rho = t_min ** (1 / rho)
@@ -930,19 +1030,19 @@ def stochastic_iterative_sampler(
         x0 = distiller(x, t * s_in)
         next_t = (t_max_rho + ts[i + 1] / (steps - 1) * (t_min_rho - t_max_rho)) ** rho
         next_t = np.clip(next_t, t_min, t_max)
-        x = x0 + generator.randn_like(x) * np.sqrt(next_t**2 - t_min**2)
+        x = x0 + generator.randn_like(x) * np.sqrt(next_t ** 2 - t_min ** 2)
 
     return x
 
 
 @torch.no_grad()
 def sample_progdist(
-    denoiser,
-    x,
-    sigmas,
-    generator=None,
-    progress=False,
-    callback=None,
+        denoiser,
+        x,
+        sigmas,
+        generator=None,
+        progress=False,
+        callback=None,
 ):
     s_in = x.new_ones([x.shape[0]])
     sigmas = sigmas[:-1]  # skip torche zero sigma
@@ -974,15 +1074,15 @@ def sample_progdist(
 
 @torch.no_grad()
 def iterative_colorization(
-    distiller,
-    images,
-    x,
-    ts,
-    t_min=0.002,
-    t_max=80.0,
-    rho=7.0,
-    steps=40,
-    generator=None,
+        distiller,
+        images,
+        x,
+        ts,
+        t_min=0.002,
+        t_max=80.0,
+        rho=7.0,
+        steps=40,
+        generator=None,
 ):
     def obtain_ortorchogonal_matrix():
         vector = np.asarray([0.2989, 0.5870, 0.1140])
@@ -1018,22 +1118,22 @@ def iterative_colorization(
         x0 = replacement(images, x0)
         next_t = (t_max_rho + ts[i + 1] / (steps - 1) * (t_min_rho - t_max_rho)) ** rho
         next_t = np.clip(next_t, t_min, t_max)
-        x = x0 + generator.randn_like(x) * np.sqrt(next_t**2 - t_min**2)
+        x = x0 + generator.randn_like(x) * np.sqrt(next_t ** 2 - t_min ** 2)
 
     return x, images
 
 
 @torch.no_grad()
 def iterative_inpainting(
-    distiller,
-    images,
-    x,
-    ts,
-    t_min=0.002,
-    t_max=80.0,
-    rho=7.0,
-    steps=40,
-    generator=None,
+        distiller,
+        images,
+        x,
+        ts,
+        t_min=0.002,
+        t_max=80.0,
+        rho=7.0,
+        steps=40,
+        generator=None,
 ):
     from PIL import Image, ImageDraw, ImageFont
 
@@ -1079,29 +1179,29 @@ def iterative_inpainting(
         x0 = replacement(images, x0)
         next_t = (t_max_rho + ts[i + 1] / (steps - 1) * (t_min_rho - t_max_rho)) ** rho
         next_t = np.clip(next_t, t_min, t_max)
-        x = x0 + generator.randn_like(x) * np.sqrt(next_t**2 - t_min**2)
+        x = x0 + generator.randn_like(x) * np.sqrt(next_t ** 2 - t_min ** 2)
 
     return x, images
 
 
 @torch.no_grad()
 def iterative_superres(
-    distiller,
-    images,
-    x,
-    ts,
-    t_min=0.002,
-    t_max=80.0,
-    rho=7.0,
-    steps=40,
-    generator=None,
+        distiller,
+        images,
+        x,
+        ts,
+        t_min=0.002,
+        t_max=80.0,
+        rho=7.0,
+        steps=40,
+        generator=None,
 ):
     patch_size = 8
 
     def obtain_ortorchogonal_matrix():
-        vector = np.asarray([1] * patch_size**2)
+        vector = np.asarray([1] * patch_size ** 2)
         vector = vector / np.linalg.norm(vector)
-        matrix = np.eye(patch_size**2)
+        matrix = np.eye(patch_size ** 2)
         matrix[:, 0] = vector
         matrix = np.linalg.qr(matrix)[0]
         if np.sum(matrix[:, 0]) < 0:
@@ -1124,7 +1224,7 @@ def iterative_superres(
                 patch_size,
             )
             .permute(0, 1, 2, 4, 3, 5)
-            .reshape(-1, 3, image_size**2 // patch_size**2, patch_size**2)
+            .reshape(-1, 3, image_size ** 2 // patch_size ** 2, patch_size ** 2)
         )
         x1_flatten = (
             x1.reshape(-1, 3, image_size, image_size)
@@ -1137,7 +1237,7 @@ def iterative_superres(
                 patch_size,
             )
             .permute(0, 1, 2, 4, 3, 5)
-            .reshape(-1, 3, image_size**2 // patch_size**2, patch_size**2)
+            .reshape(-1, 3, image_size ** 2 // patch_size ** 2, patch_size ** 2)
         )
         x0 = torch.einsum("bcnd,de->bcne", x0_flatten, Q)
         x1 = torch.einsum("bcnd,de->bcne", x1_flatten, Q)
@@ -1171,7 +1271,7 @@ def iterative_superres(
                 patch_size,
             )
             .permute(0, 1, 2, 4, 3, 5)
-            .reshape(-1, 3, image_size**2 // patch_size**2, patch_size**2)
+            .reshape(-1, 3, image_size ** 2 // patch_size ** 2, patch_size ** 2)
         )
         x_flatten[..., :] = x_flatten.mean(dim=-1, keepdim=True)
         return (
@@ -1199,6 +1299,6 @@ def iterative_superres(
         x0 = replacement(images, x0)
         next_t = (t_max_rho + ts[i + 1] / (steps - 1) * (t_min_rho - t_max_rho)) ** rho
         next_t = np.clip(next_t, t_min, t_max)
-        x = x0 + generator.randn_like(x) * np.sqrt(next_t**2 - t_min**2)
+        x = x0 + generator.randn_like(x) * np.sqrt(next_t ** 2 - t_min ** 2)
 
     return x, images
