@@ -334,126 +334,137 @@ class KarrasDiffusion:
         else:
             raise ValueError(f"Unknown loss norm {self.loss_norm}")
 
+        # After computing the CM loss (around line 250 in your original code)
         terms = {"loss": loss}
 
-        # -------------------------------------------
-        # Efficient multi-step rollout (sorted prefix)
-        # -------------------------------------------
-        # Remaining steps available for each sample (to reach last index)
-        rem = torch.clamp((num_scales - 1) - indices, min=0)
+        # ============================================================================
+        # DISCRIMINATOR ROLLOUT ONLY (separate from CM training)
+        # ============================================================================
 
+        # Sample indices that guarantee full rollout distance for discriminator
         if warmup:
-            # For warm-up, force maximum rollout from current index (0) to the end.
-            # Ignore min_rollout / max_rollout entirely.
-            # Keep original batch order (no sorting).
-            roll_sorted = rem  # full remaining steps for each item
-            order = torch.arange(B, device=device)
-            inv_order = order
+            disc_start_indices = torch.zeros(B, device=device, dtype=torch.long)
+        else:
+            # Calculate maximum valid starting index
+            max_valid_start = max(0, num_scales - 1 - rollout)
 
-            # Prepare tensors aligned to original order
-            x_fake = x_t.clone()
-            t_cur_idx = indices.clone()
-            t_cur = sigma_sched[t_cur_idx]
-            x0_sorted = x_start
-            kwargs_sorted = model_kwargs
+            if max_valid_start == 0:
+                disc_start_indices = torch.zeros(B, device=device, dtype=torch.long)
+            else:
+                disc_start_indices = torch.randint(0, max_valid_start + 1, (B,), device=device, dtype=torch.long)
 
-            max_steps = int(roll_sorted.max().item()) if roll_sorted.numel() > 0 else 0
+        # Discriminator rollout section
+        if warmup:
+            rem_disc = torch.clamp((num_scales - 1) - disc_start_indices, min=0)
+            rollout_steps_disc = rem_disc
+
+            t_disc_start_idx = disc_start_indices.clone()
+            t_disc_start = sigma_sched[t_disc_start_idx]
+            x_disc_start = x_start + noise * append_dims(t_disc_start, dims)
+
+            x_disc_fake = x_disc_start.clone()
+            t_disc_cur_idx = t_disc_start_idx.clone()
+
+            max_steps = int(rollout_steps_disc.max().item()) if rollout_steps_disc.numel() > 0 else 0
             for step in range(max_steps):
-                # number of items still active at this step
-                k = int((roll_sorted > step).sum().item())
+                k = int((rollout_steps_disc > step).sum().item())
                 if k <= 0:
                     break
                 if k < 2:
-                    break  # optional: avoid BN issues with tiny mini-batches
+                    break
 
-                cur_idx = t_cur_idx[:k]
+                cur_idx = t_disc_cur_idx[:k]
                 next_idx = torch.minimum(cur_idx + 1, torch.full_like(cur_idx, num_scales - 1))
                 t_now = sigma_sched[cur_idx]
                 t_next = sigma_sched[next_idx]
 
-                # Slice kwargs to the same active prefix
-                kwargs_step = _slice_prefix_batch(kwargs_sorted, k)
-
-                # Heun step only on active prefix using the consistency model
-                x_fake[:k] = heun_solver_consistency(
-                    x_fake[:k], t_now, t_next, x0_sorted[:k], kwargs_step
+                kwargs_step = _slice_prefix_batch(model_kwargs, k)
+                x_disc_fake[:k] = heun_solver_consistency(
+                    x_disc_fake[:k], t_now, t_next, x_start[:k], kwargs_step
                 )
 
-                # advance indices/times for active prefix
-                t_cur_idx[:k] = next_idx
-                t_cur[:k] = t_next
+                t_disc_cur_idx[:k] = next_idx
+
+            t_disc_cur = sigma_sched[t_disc_cur_idx]
+            x_tn_consistency_disc = x_disc_fake
 
         else:
-            # Normal stochastic rollout bounded by min/max
-            effective_max_rollout = rollout
-            if effective_max_rollout is not None:
-                effective_max_rollout = max(effective_max_rollout - self.rollout_decay, min_rollout)
-                effective_max_rollout = max(effective_max_rollout, min_rollout)
-                rem = torch.clamp(rem, max=effective_max_rollout)
+            rollout_steps_disc = torch.full((B,), rollout, device=device, dtype=torch.long)
 
-            # Sample uniformly in [min_rollout, rem], clamped when rem < min_rollout
-            extra_range = torch.clamp(rem - min_rollout + 1, min=0)
-            extra = torch.floor(torch.rand_like(rem, dtype=torch.float) * extra_range).long()
-            rollout_steps = torch.clamp(min_rollout + extra, max=rem)
+            roll_sorted_disc, order_disc = torch.sort(rollout_steps_disc, descending=True)
+            inv_order_disc = torch.empty_like(order_disc)
+            inv_order_disc[order_disc] = torch.arange(order_disc.numel(), device=device)
 
-            # Sort by rollout length so active samples form a contiguous prefix
-            roll_sorted, order = torch.sort(rollout_steps, descending=True)
-            inv_order = torch.empty_like(order)
-            inv_order[order] = torch.arange(order.numel(), device=device)
+            t_disc_start_idx = disc_start_indices.index_select(0, order_disc).clone()
+            t_disc_start = sigma_sched[t_disc_start_idx]
+            x_disc_start = (x_start.index_select(0, order_disc) +
+                            noise.index_select(0, order_disc) * append_dims(t_disc_start, dims))
 
-            # Reorder batch-wise things
-            x_fake = x_t.index_select(0, order).clone()
-            t_cur_idx = indices.index_select(0, order).clone()  # indices that will advance
-            t_cur = sigma_sched[t_cur_idx]  # current times
-            x0_sorted = x_start.index_select(0, order)  # x0 aligned
-            kwargs_sorted = _index_select_batch(model_kwargs, order)
+            x_disc_fake = x_disc_start.clone()
+            t_disc_cur_idx = t_disc_start_idx.clone()
+            x0_sorted_disc = x_start.index_select(0, order_disc)
+            kwargs_sorted_disc = _index_select_batch(model_kwargs, order_disc)
 
-            max_steps = int(roll_sorted[0].item()) if roll_sorted.numel() > 0 else 0
+            max_steps = int(roll_sorted_disc[0].item()) if roll_sorted_disc.numel() > 0 else 0
             for step in range(max_steps):
-                # number of items still active at this step
-                k = int((roll_sorted > step).sum().item())
+                k = int((roll_sorted_disc > step).sum().item())
                 if k <= 0:
                     break
                 if k < 2:
-                    break  # optional: avoid BN issues with tiny mini-batches
+                    break
 
-                cur_idx = t_cur_idx[:k]
+                cur_idx = t_disc_cur_idx[:k]
                 next_idx = torch.minimum(cur_idx + 1, torch.full_like(cur_idx, num_scales - 1))
                 t_now = sigma_sched[cur_idx]
                 t_next = sigma_sched[next_idx]
 
-                # Slice kwargs to the same active prefix
-                kwargs_step = _slice_prefix_batch(kwargs_sorted, k)
-
-                # Heun step only on active prefix
-                x_fake[:k] = heun_solver_consistency(
-                    x_fake[:k], t_now, t_next, x0_sorted[:k], kwargs_step
+                kwargs_step = _slice_prefix_batch(kwargs_sorted_disc, k)
+                x_disc_fake[:k] = heun_solver_consistency(
+                    x_disc_fake[:k], t_now, t_next, x0_sorted_disc[:k], kwargs_step
                 )
 
-                # advance indices/times for active prefix
-                t_cur_idx[:k] = next_idx
-                t_cur[:k] = t_next
+                t_disc_cur_idx[:k] = next_idx
 
-        # Map results back to original batch order
-        x_tn_consistency = x_fake.index_select(0, inv_order)
-        t_cur = t_cur.index_select(0, inv_order)
+            # Map back to original batch order
+            t_disc_start_idx = t_disc_start_idx.index_select(0, inv_order_disc)
+            t_disc_cur_idx = t_disc_cur_idx.index_select(0, inv_order_disc)
 
-        # True noisy reference at the final times
-        x_tn_true = x_start + noise * append_dims(t_cur, dims)
+            t_disc_start = sigma_sched[t_disc_start_idx]
+            t_disc_cur = sigma_sched[t_disc_cur_idx]
 
+            x_disc_start = x_start + noise * append_dims(t_disc_start, dims)
+            x_disc_fake = x_disc_fake.index_select(0, inv_order_disc)
+            x_tn_consistency_disc = x_disc_fake
+
+        # True noisy reference at discriminator final times
+        x_tn_true_disc = x_start + noise * append_dims(t_disc_cur, dims)
+
+        # Calculate actual rollout distances
+        actual_rollout_distances = (t_disc_cur_idx - t_disc_start_idx).float()
+
+        # ============================================================================
+        # RETURN TERMS
+        # ============================================================================
         terms.update({
-            "x_tn_consistency": x_tn_consistency,  # predicted noisy image of CM after rollout
-            "x_tn_model_output": model_output,  # predicted denoised image of CM
-            "x_tn_target": distiller_target,  # predicted noisy image of Target Model after rollout
-            "x_tn_target_model_output": model_output_target,  # predicted denoised image of target model
-            "x_tn_true": x_tn_true,  # true noisy image at end of rollout
-            "x_t": x_t,  # noisy image at start
-            "t": t,
-            "t_cur": t_cur,
+            # CM training outputs (unchanged - no rollout)
+            "x_tn_model_output": model_output,
+            "x_tn_target": distiller_target,
+            "x_tn_target_model_output": model_output_target,
+
+            # Discriminator rollout outputs
+            "x_tn_consistency": x_tn_consistency_disc,
+            "x_tn_true": x_tn_true_disc,
+            "x_t": x_disc_start,
+            "t": t_disc_start,
+            "t_cur": t_disc_cur,
+
+            # Metadata
             "x_start": x_start,
             "model_kwargs": model_kwargs,
-            # Timestep-based weighting (inverse ramp)
-            "t_weight": (((t_cur ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho))) /
+            "actual_rollout": actual_rollout_distances,
+
+            # Timestep-based weighting
+            "t_weight": (((t_disc_cur ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho))) /
                          ((self.sigma_min ** (1 / self.rho)) - (self.sigma_max ** (1 / self.rho)))),
         })
 
@@ -461,16 +472,15 @@ class KarrasDiffusion:
         # DEBUG VISUALIZATION - Add this at the very end before "return terms"
         # ============================================================================
         import matplotlib.pyplot as plt
-        import numpy as np
 
         # Only visualize occasionally to avoid slowdown
         if current_epoch % 10 == 0 and torch.rand(1).item() < 0.1:  # 10% chance every 10 epochs
             fig, axes = plt.subplots(2, 4, figsize=(20, 10))
             fig.suptitle(
-                f"Epoch {current_epoch} | Rollout {rollout}, Min Rollout {min_rollout}\n"
-                f"CM: t={t[0].item():.4f}, t2={t2[0].item():.4f} (gap={abs(t2[0] - t[0]).item():.4f}) | "
-                f"Disc Rollout: t_start={t[0].item():.4f}, t_cur={t_cur[0].item():.4f} "
-                f"(gap={abs(t_cur[0] - t[0]).item():.4f})",
+                f"Epoch {current_epoch} | Rollout {rollout}\n"
+                f"CM: t={t[0].item():.4f}, t2={t2[0].item():.4f} | "
+                f"Disc: t_start={t_disc_start[0].item():.4f}, t_cur={t_disc_cur[0].item():.4f}, "
+                f"actual_rollout={actual_rollout_distances[0].item():.1f}",
                 fontsize=14
             )
 
@@ -484,13 +494,13 @@ class KarrasDiffusion:
                         return img.permute(1, 2, 0).numpy()
                 return img.numpy()
 
-            # Row 1: CM-related images (adjacent timesteps)
+            # Row 1: CM-related images
             axes[0, 0].imshow(to_img(x_start), cmap='gray' if x_start.shape[1] == 1 else None)
             axes[0, 0].set_title(f"x_start (clean)\nt=0")
             axes[0, 0].axis('off')
 
             axes[0, 1].imshow(to_img(x_t), cmap='gray' if x_t.shape[1] == 1 else None)
-            axes[0, 1].set_title(f"x_t (CM noisy start)\nt={t[0].item():.4f}\nindex={indices[0].item()}")
+            axes[0, 1].set_title(f"x_t (CM noisy start)\nt={t[0].item():.4f}")
             axes[0, 1].axis('off')
 
             axes[0, 2].imshow(to_img(terms["x_tn_model_output"]), cmap='gray' if x_start.shape[1] == 1 else None)
@@ -498,19 +508,16 @@ class KarrasDiffusion:
             axes[0, 2].axis('off')
 
             axes[0, 3].imshow(to_img(terms["x_tn_target"]), cmap='gray' if x_start.shape[1] == 1 else None)
-            axes[0, 3].set_title(f"x_tn_target\n(Target at t2={t2[0].item():.4f})\nindex={next_idx[0].item()}")
+            axes[0, 3].set_title(f"x_tn_target\n(Target at t2={t2[0].item():.4f})")
             axes[0, 3].axis('off')
 
-            # Row 2: Discriminator rollout images (stochastic multi-step)
+            # Row 2: Discriminator-related images
             axes[1, 0].imshow(to_img(terms["x_t"]), cmap='gray' if x_start.shape[1] == 1 else None)
-            axes[1, 0].set_title(f"x_t (Disc start)\nt={terms['t'][0].item():.4f}\nindex={indices[0].item()}")
+            axes[1, 0].set_title(f"x_t (Disc start)\nt={terms['t'][0].item():.4f}")
             axes[1, 0].axis('off')
 
             axes[1, 1].imshow(to_img(terms["x_tn_consistency"]), cmap='gray' if x_start.shape[1] == 1 else None)
-            # Calculate actual rollout for this sample
-            actual_rollout_sample = int((t_cur_idx[inv_order[0]].item() - indices[0].item()))
-            axes[1, 1].set_title(
-                f"x_tn_consistency (Disc)\n(CM rollout)\nt_cur={terms['t_cur'][0].item():.4f}\nrollout={actual_rollout_sample} steps")
+            axes[1, 1].set_title(f"x_tn_consistency (Disc)\n(CM rollout)\nt_cur={terms['t_cur'][0].item():.4f}")
             axes[1, 1].axis('off')
 
             axes[1, 2].imshow(to_img(terms["x_tn_true"]), cmap='gray' if x_start.shape[1] == 1 else None)
@@ -524,34 +531,23 @@ class KarrasDiffusion:
             axes[1, 3].axis('off')
 
             plt.tight_layout()
-            plt.savefig(f"debug_terms_old_version_epoch_{current_epoch}.png", dpi=150, bbox_inches='tight')
+            plt.savefig(f"debug_terms_epoch_{current_epoch}.png", dpi=150, bbox_inches='tight')
             plt.close()
 
             # Print detailed info
             print("\n" + "=" * 80)
-            print(f"TERMS DEBUG (STOCHASTIC ROLLOUT) - Epoch {current_epoch}")
+            print(f"TERMS DEBUG - Epoch {current_epoch}")
             print("=" * 80)
-            print(f"Rollout parameters: max={rollout}, min={min_rollout}, decay={self.rollout_decay}")
+            print(f"Rollout parameter: {rollout}")
             print(f"\nCM Training (adjacent timesteps):")
-            print(f"  t (random):        {t[0].item():.6f} (index={indices[0].item()})")
-            print(f"  t2 (t+1):          {t2[0].item():.6f} (index={next_idx[0].item()})")
+            print(f"  t (random):        {t[0].item():.6f}")
+            print(f"  t2 (t+1):          {t2[0].item():.6f}")
             print(f"  Timestep gap:      {(t2[0] - t[0]).item():.6f}")
-            print(f"\nDiscriminator Stochastic Rollout (sample 0):")
-            print(f"  Start index:       {indices[0].item()}")
-            print(f"  t_start:           {terms['t'][0].item():.6f}")
-            # Calculate the actual ending index after reordering
-            actual_end_idx = t_cur_idx[inv_order[0]].item()
-            actual_rollout_sample = int(actual_end_idx - indices[0].item())
-            print(f"  End index:         {actual_end_idx}")
-            print(f"  t_cur:             {terms['t_cur'][0].item():.6f}")
-            print(f"  Actual rollout:    {actual_rollout_sample} steps")
+            print(f"\nDiscriminator Rollout:")
+            print(f"  t_disc_start:      {terms['t'][0].item():.6f}")
+            print(f"  t_disc_cur:        {terms['t_cur'][0].item():.6f}")
+            print(f"  Actual rollout:    {actual_rollout_distances[0].item():.1f} steps")
             print(f"  Sigma gap:         {(terms['t_cur'][0] - terms['t'][0]).item():.6f}")
-            print(f"\nRollout Statistics (across batch):")
-            # Get rollout distances for all samples
-            all_rollouts = t_cur_idx[inv_order] - indices
-            print(f"  Min rollout:       {all_rollouts.min().item()} steps")
-            print(f"  Max rollout:       {all_rollouts.max().item()} steps")
-            print(f"  Mean rollout:      {all_rollouts.float().mean().item():.2f} steps")
             print(f"\nImage shapes:")
             print(f"  x_start:           {x_start.shape}")
             print(f"  x_tn_consistency:  {terms['x_tn_consistency'].shape}")
